@@ -236,6 +236,111 @@ function changedEntities(previous = [], next = []) {
   return changed;
 }
 
+function jsonEqual(left, right) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function mergeAuditLogs(baseLogs = [], serverLogs = [], clientLogs = []) {
+  const logs = new Map();
+  [...baseLogs, ...serverLogs, ...clientLogs].forEach((log) => {
+    if (log?.id) logs.set(log.id, log);
+  });
+  return [...logs.values()]
+    .sort((left, right) => String(left.at || '').localeCompare(String(right.at || '')))
+    .slice(-100);
+}
+
+function mergeObjectFields(baseItem = {}, serverItem = {}, clientItem = {}) {
+  const merged = { ...serverItem };
+  const conflicts = [];
+  const keys = new Set([...Object.keys(baseItem || {}), ...Object.keys(serverItem || {}), ...Object.keys(clientItem || {})]);
+  keys.forEach((key) => {
+    const baseValue = baseItem?.[key];
+    const serverValue = serverItem?.[key];
+    const clientValue = clientItem?.[key];
+    const serverChanged = !jsonEqual(baseValue, serverValue);
+    const clientChanged = !jsonEqual(baseValue, clientValue);
+    if (!clientChanged) return;
+    if (!serverChanged || jsonEqual(serverValue, clientValue)) {
+      if (clientValue === undefined) delete merged[key];
+      else merged[key] = clientValue;
+      return;
+    }
+    conflicts.push({ field: key });
+  });
+  return { item: merged, conflicts };
+}
+
+function mergeCollectionById(key, baseState, serverState, clientState) {
+  const baseMap = new Map((baseState[key] || []).map((item) => [item.id, item]));
+  const serverMap = new Map((serverState[key] || []).map((item) => [item.id, item]));
+  const clientMap = new Map((clientState[key] || []).map((item) => [item.id, item]));
+  const merged = [];
+  const conflicts = [];
+  const ids = new Set([...baseMap.keys(), ...serverMap.keys(), ...clientMap.keys()]);
+
+  ids.forEach((id) => {
+    const baseItem = baseMap.get(id);
+    const serverItem = serverMap.get(id);
+    const clientItem = clientMap.get(id);
+    const serverChanged = !jsonEqual(baseItem, serverItem);
+    const clientChanged = !jsonEqual(baseItem, clientItem);
+
+    if (!clientChanged) {
+      if (serverItem) merged.push(serverItem);
+      return;
+    }
+    if (!serverChanged || jsonEqual(serverItem, clientItem)) {
+      if (clientItem) merged.push(clientItem);
+      return;
+    }
+    if (!clientItem || !serverItem) {
+      conflicts.push({ collection: key, id, reason: '同一数据被一方删除且另一方修改' });
+      if (serverItem) merged.push(serverItem);
+      return;
+    }
+
+    const fieldMerge = mergeObjectFields(baseItem, serverItem, clientItem);
+    if (fieldMerge.conflicts.length) {
+      conflicts.push({
+        collection: key,
+        id,
+        reason: '同一字段被多人同时修改',
+        fields: fieldMerge.conflicts.map((conflict) => conflict.field),
+      });
+    }
+    merged.push(fieldMerge.item);
+  });
+
+  return { items: merged, conflicts };
+}
+
+export function mergeBusinessState(baseState, serverState, clientState) {
+  if (!baseState || typeof baseState !== 'object') {
+    return { state: clientState, conflicts: [] };
+  }
+  const collections = ['users', 'projects', 'sprints', 'requirements', 'milestones', 'timelineNodes'];
+  const mergedState = {
+    ...serverState,
+    view: clientState.view || serverState.view,
+    selectedProjectId: clientState.selectedProjectId || serverState.selectedProjectId || '',
+    selectedSprintId: clientState.selectedSprintId || serverState.selectedSprintId || '',
+    selectedRequirementId: clientState.selectedRequirementId || serverState.selectedRequirementId || '',
+    selectedMilestoneId: clientState.selectedMilestoneId || serverState.selectedMilestoneId || '',
+    search: clientState.search ?? serverState.search ?? '',
+    projectStatus: clientState.projectStatus || serverState.projectStatus || 'all',
+    sprintStatus: clientState.sprintStatus || serverState.sprintStatus || 'all',
+    auditLogs: mergeAuditLogs(baseState.auditLogs, serverState.auditLogs, clientState.auditLogs),
+  };
+  const conflicts = [];
+  collections.forEach((key) => {
+    const result = mergeCollectionById(key, baseState, serverState, clientState);
+    mergedState[key] = result.items;
+    conflicts.push(...result.conflicts);
+  });
+  return { state: mergedState, conflicts };
+}
+
 export function canSaveState(previousState, nextState, actor) {
   const role = normalizeRole(actor?.role);
   if (role === 'pmo') return { allowed: true };
@@ -251,6 +356,22 @@ export function canSaveState(previousState, nextState, actor) {
   for (const key of changedCollections) {
     const changed = changedEntities(previousState[key] || [], nextState[key] || []);
     const outsideScope = changed.some((entity) => projectForEntity(previousState, entity, key)?.owner !== actor.id);
+    if (outsideScope) return { allowed: false, message: 'PM 只能修改自己负责项目下的数据' };
+  }
+  return { allowed: true };
+}
+
+function canSaveDeltaInLatestScope(baseState, nextState, latestState, actor) {
+  const role = normalizeRole(actor?.role);
+  if (role !== 'pm') return { allowed: true };
+  const changedCollections = ['projects', 'sprints', 'requirements', 'milestones', 'timelineNodes'];
+  for (const key of changedCollections) {
+    const changed = changedEntities(baseState[key] || [], nextState[key] || []);
+    const outsideScope = changed.some((entity) => {
+      const latestProject = projectForEntity(latestState, entity, key);
+      const baseProject = projectForEntity(baseState, entity, key);
+      return (latestProject || baseProject)?.owner !== actor.id;
+    });
     if (outsideScope) return { allowed: false, message: 'PM 只能修改自己负责项目下的数据' };
   }
   return { allowed: true };
@@ -432,22 +553,56 @@ export function createApp(repository = createRepository(openDatabase())) {
       response.status(401).json({ error: '未登录或登录已失效', requestId: request.requestId });
       return;
     }
-    if (!isInitialBootstrap && Number(nextState.revision || request.body?.revision || 0) !== Number(existingState.revision || 0)) {
-      response.status(409).json({ error: '数据版本已变化，请刷新后再保存', requestId: request.requestId });
-      return;
-    }
-    const securedState = secureStateForStorage(nextState, existingState);
+    const baseState = request.body?.baseState;
+    const requestRevision = Number(nextState.revision || request.body?.revision || 0);
+    const serverRevision = Number(existingState?.revision || 0);
+    const securedClientState = secureStateForStorage(nextState, existingState);
+    const hasValidBaseState = Boolean(baseState && !validateBusinessState(baseState));
+    const securedBaseState = hasValidBaseState
+      ? secureStateForStorage(baseState, existingState)
+      : existingState;
     const actor = isInitialBootstrap
-      ? securedState.users.find((user) => normalizeRole(user.role) === 'pmo')
+      ? securedClientState.users.find((user) => normalizeRole(user.role) === 'pmo')
       : existingState.users.find((user) => user.id === auth.user.id);
     if (!isInitialBootstrap) {
-      const permission = canSaveState(existingState, securedState, actor);
+      const permission = canSaveState(securedBaseState || existingState, securedClientState, actor);
       if (!permission.allowed) {
         logger.warn('auth.permission.denied', { requestId: request.requestId, actor: actor?.id, message: permission.message });
         response.status(403).json({ error: permission.message, requestId: request.requestId });
         return;
       }
+      const latestScopePermission = canSaveDeltaInLatestScope(securedBaseState || existingState, securedClientState, existingState, actor);
+      if (!latestScopePermission.allowed) {
+        logger.warn('auth.permission.denied', { requestId: request.requestId, actor: actor?.id, message: latestScopePermission.message });
+        response.status(403).json({ error: latestScopePermission.message, requestId: request.requestId });
+        return;
+      }
     }
+    const shouldMerge = !isInitialBootstrap && requestRevision !== serverRevision;
+    if (shouldMerge && !hasValidBaseState) {
+      response.status(409).json({
+        error: '数据版本已变化，请刷新后再保存',
+        requestId: request.requestId,
+        state: sanitizeStateForClient(existingState, actor?.id || ''),
+        revision: existingState.revision,
+      });
+      return;
+    }
+    const mergeResult = shouldMerge
+      ? mergeBusinessState(securedBaseState, existingState, securedClientState)
+      : { state: securedClientState, conflicts: [] };
+    if (mergeResult.conflicts.length) {
+      logger.warn('state.merge.conflict', { requestId: request.requestId, actor: actor?.id, conflicts: mergeResult.conflicts });
+      response.status(409).json({
+        error: '数据已被他人同时修改，请刷新后基于最新内容重新提交',
+        requestId: request.requestId,
+        conflicts: mergeResult.conflicts,
+        state: sanitizeStateForClient(existingState, actor?.id || ''),
+        revision: existingState.revision,
+      });
+      return;
+    }
+    const securedState = mergeResult.state;
     const savedState = {
       ...securedState,
       currentUserId: actor?.id || '',

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRepository, openDatabase } from '../server/database.js';
-import { canSaveState, createInitialState, hashPassword, sanitizeStateForClient, secureStateForStorage, validateBusinessState, verifyPassword } from '../server/index.js';
+import { canSaveState, createInitialState, hashPassword, mergeBusinessState, sanitizeStateForClient, secureStateForStorage, validateBusinessState, verifyPassword } from '../server/index.js';
 
 function createTestRepository() {
   const dbPath = join(mkdtempSync(join(tmpdir(), 'pmo-suite-')), 'test.sqlite');
@@ -168,6 +168,91 @@ test('server validation and permission checks block unsafe snapshot writes', () 
     projects: [{ ...previousState.projects[0], description: '成员尝试修改' }],
   };
   assert.equal(canSaveState(previousState, memberChange, previousState.users[2]).allowed, false);
+});
+
+test('business state merge preserves independent concurrent changes', () => {
+  const baseState = {
+    users: [{ id: 'u-1', account: 'zhangsan', name: '张三', role: 'pmo', status: 'active' }],
+    projects: [{ id: 'p-1', name: '项目一', owner: 'u-1', members: ['u-1'], status: 'active' }],
+    sprints: [],
+    requirements: [],
+    milestones: [],
+    timelineNodes: [],
+    auditLogs: [{ id: 'audit-base', at: '2026-05-12 10:00', event: 'base' }],
+  };
+  const serverState = {
+    ...baseState,
+    revision: 2,
+    projects: baseState.projects.concat({ id: 'p-2', name: '项目二', owner: 'u-1', members: ['u-1'], status: 'planning' }),
+    auditLogs: baseState.auditLogs.concat({ id: 'audit-server', at: '2026-05-12 10:01', event: 'server' }),
+  };
+  const clientState = {
+    ...baseState,
+    revision: 1,
+    sprints: [{ id: 's-1', projectId: 'p-1', name: 'Sprint 1', owner: 'u-1', status: 'active' }],
+    auditLogs: baseState.auditLogs.concat({ id: 'audit-client', at: '2026-05-12 10:02', event: 'client' }),
+  };
+
+  const result = mergeBusinessState(baseState, serverState, clientState);
+
+  assert.deepEqual(result.conflicts, []);
+  assert.equal(result.state.projects.some((project) => project.id === 'p-2'), true);
+  assert.equal(result.state.sprints.some((sprint) => sprint.id === 's-1'), true);
+  assert.equal(result.state.auditLogs.some((log) => log.id === 'audit-server'), true);
+  assert.equal(result.state.auditLogs.some((log) => log.id === 'audit-client'), true);
+});
+
+test('business state merge detects same-field concurrent conflicts without overwriting server data', () => {
+  const baseState = {
+    users: [{ id: 'u-1', account: 'zhangsan', name: '张三', role: 'pmo', status: 'active' }],
+    projects: [{ id: 'p-1', name: '项目一', description: '初始说明', owner: 'u-1', members: ['u-1'], status: 'active' }],
+    sprints: [],
+    requirements: [],
+    milestones: [],
+    timelineNodes: [],
+    auditLogs: [],
+  };
+  const serverState = {
+    ...baseState,
+    projects: [{ ...baseState.projects[0], description: '服务端说明' }],
+  };
+  const clientState = {
+    ...baseState,
+    projects: [{ ...baseState.projects[0], description: '客户端说明' }],
+  };
+
+  const result = mergeBusinessState(baseState, serverState, clientState);
+
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.conflicts[0].collection, 'projects');
+  assert.equal(result.conflicts[0].fields.includes('description'), true);
+  assert.equal(result.state.projects[0].description, '服务端说明');
+});
+
+test('business state merge combines disjoint fields on the same entity', () => {
+  const baseState = {
+    users: [{ id: 'u-1', account: 'zhangsan', name: '张三', role: 'pmo', status: 'active' }],
+    projects: [{ id: 'p-1', name: '项目一', description: '初始说明', owner: 'u-1', members: ['u-1'], status: 'planning' }],
+    sprints: [],
+    requirements: [],
+    milestones: [],
+    timelineNodes: [],
+    auditLogs: [],
+  };
+  const serverState = {
+    ...baseState,
+    projects: [{ ...baseState.projects[0], status: 'active' }],
+  };
+  const clientState = {
+    ...baseState,
+    projects: [{ ...baseState.projects[0], description: '客户端补充说明' }],
+  };
+
+  const result = mergeBusinessState(baseState, serverState, clientState);
+
+  assert.deepEqual(result.conflicts, []);
+  assert.equal(result.state.projects[0].status, 'active');
+  assert.equal(result.state.projects[0].description, '客户端补充说明');
 });
 
 test('backup checksum is attached through API-compatible enrichment path', () => {

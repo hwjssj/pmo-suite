@@ -1,8 +1,18 @@
 window.PMO_META = {
-  "version": "0.6.28",
-  "buildDate": "2026-05-12 15:58",
+  "version": "0.6.29",
+  "buildDate": "2026-05-12 19:18",
   "dataSchema": 1,
   "changelog": [
+    {
+      "version": "0.6.29",
+      "date": "2026-05-12 19:18",
+      "message": "Resolve concurrent state merges and active sprint border",
+      "points": [
+        "新增基于 revision 和 baseState 的服务端三方合并，避免多人同时操作不同业务数据时互相覆盖",
+        "同一业务字段发生并发冲突时返回冲突信息并保留服务端最新数据，阻止静默丢失",
+        "修复 Chrome 144 下当前 Sprint 圆角色块底部描边渲染异常"
+      ]
+    },
     {
       "version": "0.6.28",
       "date": "2026-05-12 15:58",

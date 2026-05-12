@@ -105,7 +105,7 @@ npm test
 
 业务数据通过 `/api/state` 保存到 SQLite。PMO 手动备份通过 `/api/backups` 保存到 SQLite，同时支持导出 JSON 备份文件到本地并在数据丢失后导入恢复。浏览器仍保留 `localStorage` 副本作为离线或服务端异常时的兜底，并会在服务端无数据时尝试迁移已有本地数据。应用版本、构建信息和更新日志独立保存在 `src/meta.js`，系统迭代不会因为版本号变化覆盖已有项目、Sprint、需求、里程碑和用户数据。
 
-服务端会将用户密码转换为 `scrypt` 哈希后保存，并通过 HttpOnly Cookie 维护登录会话。写入接口会进行服务端权限校验：PMO 拥有全部权限，PM 仅能修改自己负责项目下的数据，成员仅可查看。SQLite 使用 `schema_migrations` 记录结构升级，业务状态带 `revision` 用于降低并发覆盖风险。
+服务端会将用户密码转换为 `scrypt` 哈希后保存，并通过 HttpOnly Cookie 维护登录会话。写入接口会进行服务端权限校验：PMO 拥有全部权限，PM 仅能修改自己负责项目下的数据，成员仅可查看。SQLite 使用 `schema_migrations` 记录结构升级。业务状态保存采用 `revision + baseState` 三方合并机制：多人并发修改不同项目、Sprint、需求、里程碑、时间轴或用户记录时会自动合并；同一字段被同时修改时服务端拒绝静默覆盖并返回冲突信息，避免旧快照覆盖新数据。
 
 当前 REST API：
 

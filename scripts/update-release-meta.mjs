@@ -6,6 +6,7 @@ const log = execFileSync('git', ['log', '--date=format-local:%Y-%m-%d %H:%M', '-
 });
 
 const zhSummary = {
+  'Resolve concurrent state merges and active sprint border': ['新增基于 revision 和 baseState 的服务端三方合并，避免多人同时操作不同业务数据时互相覆盖', '同一业务字段发生并发冲突时返回冲突信息并保留服务端最新数据，阻止静默丢失', '修复 Chrome 144 下当前 Sprint 圆角色块底部描边渲染异常'],
   'Complete deployment iteration foundations': ['补齐 Docker、环境变量模板、开发启动脚本和结构化日志，为持续运行提供标准部署入口', 'SQLite 在保留快照兼容层的同时同步关系表，并增强健康检查、备份 checksum 和首次初始化接口', '增强 CI、Dependabot、PR 模板和资源级只读 API 雏形，为稳定迭代和后续资源 API 改造打基础'],
   'Harden auth permissions and deployment foundations': ['新增服务端登录会话、密码哈希和安全状态脱敏，降低明文密码与前端鉴权风险', '为 SQLite 增加 schema migrations、revision 乐观锁和 session 存储，提升持续迭代与并发保存安全性', '补充服务端权限校验、仓储安全测试和 GitHub Actions CI，阻止无权限快照写入并自动验证提交质量'],
   'Add Express SQLite backend': ['新增 Node.js + Express 后端，统一托管前端静态资源与 REST API', '新增 SQLite 持久化仓储，业务状态和 PMO 备份从浏览器本地存储升级为服务端保存', '前端数据层优先连接服务端接口，并保留 localStorage 作为离线兜底和历史数据迁移来源'],
@@ -48,6 +49,10 @@ function versionAt(total, index) {
   return `0.6.${total - index}`;
 }
 
+function currentMinute(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 const rawEntries = log
   .trim()
   .split('\n')
@@ -63,10 +68,18 @@ const rawEntries = log
     };
   });
 
+const buildDate = currentMinute();
+const pendingMessage = process.env.PMO_PENDING_RELEASE_MESSAGE;
 const entries = rawEntries.length ? rawEntries : [];
+if (pendingMessage) {
+  entries.unshift({
+    version: versionAt(entries.length + 1, 0),
+    date: buildDate,
+    message: pendingMessage,
+    points: zhSummary[pendingMessage] || fallbackPoints(pendingMessage),
+  });
+}
 
-const now = new Date();
-const buildDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 const content = `window.PMO_META = ${JSON.stringify({
   version: entries[0]?.version || '0.6.0',
   buildDate,

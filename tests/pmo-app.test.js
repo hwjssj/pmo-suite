@@ -12,7 +12,7 @@ const source = [
   '../src/main.js',
 ].map((file) => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
-function createRuntime(savedState = null, { blockStorage = false, meta = null, initialHash = '' } = {}) {
+function createRuntime(savedState = null, { blockStorage = false, meta = null, initialHash = '', protocol = '', fetch = null } = {}) {
   const listeners = {};
   const store = new Map();
   const downloads = [];
@@ -75,7 +75,7 @@ function createRuntime(savedState = null, { blockStorage = false, meta = null, i
     },
     window: {
       PMO_META: meta,
-      location: { hash: initialHash },
+      location: { hash: initialHash, protocol },
       history: {
         replaceState(_state, _title, hash) {
           context.window.location.hash = hash;
@@ -96,6 +96,7 @@ function createRuntime(savedState = null, { blockStorage = false, meta = null, i
       },
     },
   };
+  if (fetch) context.window.fetch = fetch;
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(source, context);
@@ -138,6 +139,11 @@ function submit(listeners, formName, fields) {
 
 function storedState(store) {
   return JSON.parse(store.get('pmo-sprint-api-cache-v2'));
+}
+
+async function flushAsyncWork() {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 test('strict account login works through standard form submit when preview storage writes are blocked', () => {
@@ -713,4 +719,87 @@ test('project cards remove rhythm labels and use aligned metadata blocks', () =>
   assert.match(app.innerHTML, /class="project-compact-meta"/);
   assert.match(app.innerHTML, /<span>Owner<\/span><strong>李四<\/strong>/);
   assert.match(app.innerHTML, /<span>项目周期<\/span>/);
+});
+
+test('remote state saves include the last server base state and apply merged response', async () => {
+  const baseState = {
+    schemaVersion: 1,
+    authSeedVersion: 1,
+    revision: 7,
+    view: 'overview',
+    selectedProjectId: 'p-1',
+    selectedSprintId: '',
+    selectedRequirementId: '',
+    selectedMilestoneId: '',
+    search: '',
+    projectStatus: 'all',
+    sprintStatus: 'all',
+    currentUserId: 'u-1',
+    loginError: '',
+    users: [
+      { id: 'u-1', account: 'zhangsan', name: '张三', role: 'pmo', status: 'active', hasPassword: true },
+    ],
+    projects: [{ id: 'p-1', name: '基线项目', owner: 'u-1', members: ['u-1'], status: 'active' }],
+    sprints: [],
+    requirements: [],
+    milestones: [],
+    timelineNodes: [],
+    auditLogs: [{ id: 'audit-base', at: '2026-05-12 10:00', event: 'base' }],
+  };
+  let savePayload = null;
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/auth/me') {
+      return {
+        ok: true,
+        async json() {
+          return { state: structuredClone(baseState), backups: [] };
+        },
+      };
+    }
+    if (url === '/api/state') {
+      savePayload = JSON.parse(options.body);
+      return {
+        ok: true,
+        async json() {
+          return {
+            state: {
+              ...savePayload.state,
+              revision: 8,
+              projects: savePayload.state.projects.concat({ id: 'p-2', name: '服务端合并项目', owner: 'u-1', members: ['u-1'], status: 'planning' }),
+              auditLogs: savePayload.state.auditLogs.concat({ id: 'audit-server', at: '2026-05-12 10:01', event: 'server' }),
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  const { context, store } = createRuntime(null, { protocol: 'http:', fetch });
+
+  await flushAsyncWork();
+  vm.runInContext('apiClient.saveState({ ...state, search: "remote-search" }, "test.remote.save")', context);
+  await flushAsyncWork();
+
+  assert.equal(savePayload.revision, 7);
+  assert.equal(savePayload.baseState.revision, 7);
+  assert.equal(savePayload.baseState.projects[0].name, '基线项目');
+  assert.equal(savePayload.state.search, 'remote-search');
+  assert.equal(savePayload.state.users[0].password, '');
+  const cached = storedState(store);
+  assert.equal(cached.revision, 8);
+  assert.equal(cached.projects.some((project) => project.id === 'p-2'), true);
+});
+
+test('active sprint card CSS uses inset stroke to avoid Chrome rounded border clipping', () => {
+  const css = fs.readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const cardBlock = css.match(/\.active-sprint-card \{[\s\S]*?\n\}/)?.[0] || '';
+  const beforeBlock = css.match(/\.active-sprint-card::before \{[\s\S]*?\n\}/)?.[0] || '';
+  const hoverBlock = css.match(/\.active-sprint-card:hover,[\s\S]*?\.active-sprint-card:focus \{[\s\S]*?\n\}/)?.[0] || '';
+
+  assert.match(cardBlock, /border:\s*1px solid transparent;/);
+  assert.doesNotMatch(cardBlock, /border-left:/);
+  assert.match(cardBlock, /box-shadow:\s*inset 0 0 0 1px #ece1b7;/);
+  assert.match(beforeBlock, /width:\s*5px;/);
+  assert.match(beforeBlock, /background:\s*var\(--primary\);/);
+  assert.match(hoverBlock, /box-shadow:\s*inset 0 0 0 1px #dfc553,/);
 });

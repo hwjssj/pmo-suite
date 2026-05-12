@@ -236,6 +236,7 @@ const defaultState = {
 const storageKey = 'pmo-sprint-api-cache-v2';
 const backupStorageKey = 'pmo-sprint-api-backups-v1';
 let backupCache = [];
+let remoteBaseState = null;
 const apiClient = {
   transport: 'rest',
   usesRemote() {
@@ -324,14 +325,20 @@ const apiClient = {
         method: 'PUT',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: nextState, event, revision: nextState.revision }),
+        body: JSON.stringify({ state: nextState, baseState: remoteBaseState, event, revision: nextState.revision }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'API save failed');
-      if (Array.isArray(payload.auditLogs)) {
+      if (payload.state) {
+        applyRemoteStatePayload(payload.state);
+        remoteBaseState = cloneSerializableState(payload.state);
+        this.saveLocalState(cloneSerializableState(payload.state));
+      } else if (Array.isArray(payload.auditLogs)) {
         state.auditLogs = payload.auditLogs;
         if (payload.revision) state.revision = payload.revision;
-        this.saveLocalState({ ...nextState, revision: payload.revision || nextState.revision, auditLogs: payload.auditLogs });
+        const savedState = { ...nextState, revision: payload.revision || nextState.revision, auditLogs: payload.auditLogs };
+        remoteBaseState = cloneSerializableState(savedState);
+        this.saveLocalState(savedState);
       }
     } catch (error) {
       showToast(`${error.message || '服务端暂不可用'}，已保留浏览器本地副本`);
@@ -421,6 +428,24 @@ function migrateBusinessState(saved) {
   return migrated;
 }
 
+function cloneSerializableState(value) {
+  if (!value) return null;
+  return structuredClone(value);
+}
+
+function applyRemoteStatePayload(remoteState) {
+  if (!remoteState) return;
+  const preserved = {
+    drawer: state.drawer,
+    edit: state.edit,
+    toast: state.toast,
+    loginError: state.loginError,
+  };
+  const nextState = migrateBusinessState(remoteState);
+  Object.assign(state, nextState, preserved);
+  normalizeState();
+}
+
 function migrateSeedUsers(savedUsers = []) {
   const users = savedUsers.map((user) => ({ ...user }));
   const existingAccounts = new Set(users.map((user) => user.account).filter(Boolean));
@@ -455,7 +480,7 @@ function normalizeState() {
     account: user.account || defaultAccount(user.name),
     name: user.name || user.account || defaultAccount(user.name),
     role: normalizeRole(user.role),
-    password: user.password || '123456',
+    password: user.password || (user.hasPassword ? '' : '123456'),
     status: user.status || 'active',
   }));
   if (state.currentUserId && !systemUsers().some((user) => user.id === state.currentUserId && user.status === 'active')) {
@@ -2921,6 +2946,7 @@ function applyBootState(savedState, backups = [], setupRequired = false) {
   const nextState = setupRequired ? { ...migrateBusinessState(null), setupRequired: true, currentUserId: '', users: [], projects: [], sprints: [], requirements: [], milestones: [], timelineNodes: [] } : migrateBusinessState(savedState);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, nextState);
+  remoteBaseState = setupRequired ? null : cloneSerializableState(nextState);
   backupCache = backups;
   normalizeState();
   applyRouteFromHash();
