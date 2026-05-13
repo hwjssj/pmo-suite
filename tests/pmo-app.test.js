@@ -416,10 +416,11 @@ test('user drawer uses account-only fields and validates password confirmation',
   assert.match(app.innerHTML, /<button class="link-button danger" disabled>删除<\/button>/);
   click(listeners, 'new-user');
   assert.match(app.innerHTML, /data-form="user"/);
-  assert.match(app.innerHTML, /<label>姓名<\/label>/);
+  assert.match(app.innerHTML, /<label>姓名<span class="required-mark">\*<\/span><\/label>/);
   assert.match(app.innerHTML, /用户账号/);
   assert.doesNotMatch(app.innerHTML, /<label>邮箱<\/label>/);
   assert.doesNotMatch(app.innerHTML, /<label>状态<\/label>/);
+  assert.doesNotMatch(app.innerHTML, /当前密码/);
   assert.match(app.innerHTML, /aria-label="关闭">×<\/button>/);
 
   submit(listeners, 'user', {
@@ -630,13 +631,14 @@ test('sprint edit actions drill down to scoped tertiary pages', () => {
   const { app, listeners, store } = createRuntime({ currentUserId: 'u-1', selectedProjectId: 'p-1', selectedSprintId: 's-1' });
 
   click(listeners, 'open-sprint', { id: 's-1' });
-  click(listeners, 'edit-sprint-section', { id: 's-1', section: 'basic' });
-  assert.match(app.innerHTML, /Sprint 三级编辑/);
-  assert.match(app.innerHTML, /data-form="sprint-edit-basic"/);
+  click(listeners, 'edit-sprint', { id: 's-1', step: 'basic' });
+  assert.match(app.innerHTML, /Sprint 编辑向导/);
+  assert.match(app.innerHTML, /data-form="sprint-edit"/);
   assert.doesNotMatch(app.innerHTML, /data-form="sprint"/);
-  assert.doesNotMatch(app.innerHTML, /关键需求<\/h3>/);
+  assert.match(app.innerHTML, /Sprint 名称<span class="required-mark">\*<\/span>/);
+  assert.doesNotMatch(app.innerHTML, /当前密码/);
 
-  submit(listeners, 'sprint-edit-basic', {
+  submit(listeners, 'sprint-edit', {
     name: 'Sprint 1 - 基础信息已更新',
     owner: 'u-2',
     status: 'active',
@@ -651,11 +653,13 @@ test('sprint edit actions drill down to scoped tertiary pages', () => {
   assert.match(app.innerHTML, /Sprint 1 - 基础信息已更新/);
   assert.equal(storedState(store).sprints.find((sprint) => sprint.id === 's-1').name, 'Sprint 1 - 基础信息已更新');
 
-  click(listeners, 'edit-sprint-section', { id: 's-1', section: 'plan', add: 'milestones' });
-  assert.match(app.innerHTML, /data-form="sprint-edit-plan"/);
+  click(listeners, 'edit-sprint', { id: 's-1', step: 'plan', add: 'milestones' });
+  assert.match(app.innerHTML, /data-form="sprint-edit"/);
   assert.match(app.innerHTML, /里程碑 3/);
-  assert.doesNotMatch(app.innerHTML, /Sprint 名称/);
-  submit(listeners, 'sprint-edit-plan', {
+  assert.match(app.innerHTML, /class="wizard-step active" data-action="sprint-edit-step" data-step="plan"/);
+  click(listeners, 'sprint-edit-next', {});
+  assert.match(app.innerHTML, /请补全里程碑的名称、日期、负责人和状态/);
+  submit(listeners, 'sprint-edit', {
     'milestones.2.name': '上线复盘',
     'milestones.2.date': '2026-05-25',
     'milestones.2.owner': 'u-2',
@@ -665,11 +669,11 @@ test('sprint edit actions drill down to scoped tertiary pages', () => {
   });
   assert.equal(storedState(store).milestones.some((item) => item.name === '上线复盘'), true);
 
-  click(listeners, 'edit-sprint-section', { id: 's-1', section: 'requirements' });
-  assert.match(app.innerHTML, /data-form="sprint-edit-requirements"/);
+  click(listeners, 'edit-sprint', { id: 's-1', step: 'requirements' });
+  assert.match(app.innerHTML, /data-form="sprint-edit"/);
   assert.match(app.innerHTML, /WeTask 链接/);
-  assert.doesNotMatch(app.innerHTML, /Sprint 名称/);
-  submit(listeners, 'sprint-edit-requirements', {
+  assert.match(app.innerHTML, /class="wizard-step active" data-action="sprint-edit-step" data-step="requirements"/);
+  submit(listeners, 'sprint-edit', {
     'requirements.0.wetaskUrl': 'https://wetask.example.com/requirements/REQ-001-updated',
   });
   assert.equal(

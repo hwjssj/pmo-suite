@@ -1,11 +1,21 @@
 window.PMO_META = {
-  "version": "0.6.29",
-  "buildDate": "2026-05-12 19:18",
+  "version": "0.6.30",
+  "buildDate": "2026-05-13 17:56",
   "dataSchema": 1,
   "changelog": [
     {
+      "version": "0.6.30",
+      "date": "2026-05-13 17:53",
+      "message": "Unify sprint edit wizard and required validation",
+      "points": [
+        "根据提交「Unify sprint edit wizard and required validation」更新对应产品能力",
+        "同步完善界面交互、数据处理或权限控制细节",
+        "更新版本元数据，确保更新日志连续可追溯"
+      ]
+    },
+    {
       "version": "0.6.29",
-      "date": "2026-05-12 19:18",
+      "date": "2026-05-12 19:19",
       "message": "Resolve concurrent state merges and active sprint border",
       "points": [
         "新增基于 revision 和 baseState 的服务端三方合并，避免多人同时操作不同业务数据时互相覆盖",

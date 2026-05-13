@@ -1843,6 +1843,12 @@ h1 {
   font-weight: 700;
 }
 
+.required-mark {
+  display: inline-block;
+  margin-left: 4px;
+  color: #c9485b;
+}
+
 .field input,
 .field select,
 .field textarea {

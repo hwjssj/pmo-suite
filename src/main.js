@@ -794,7 +794,7 @@ function renderCurrentPage() {
 }
 
 function routeViews() {
-  return new Set(['overview', 'users', 'dataBackup', 'about', 'changelog', 'sprintDetail', 'sprintCreate', 'requirementDetail', 'milestoneDetail', 'sprintEditBasic', 'sprintEditPlan', 'sprintEditRequirements']);
+  return new Set(['overview', 'users', 'dataBackup', 'about', 'changelog', 'sprintDetail', 'sprintCreate', 'requirementDetail', 'milestoneDetail', 'sprintEdit', 'sprintEditBasic', 'sprintEditPlan', 'sprintEditRequirements']);
 }
 
 function applyRouteFromHash() {
@@ -1018,7 +1018,7 @@ function render() {
     state.view = 'overview';
   }
   ensureSelection();
-  const isDrilldown = ['sprintDetail', 'sprintCreate', 'requirementDetail', 'milestoneDetail', 'sprintEditBasic', 'sprintEditPlan', 'sprintEditRequirements'].includes(state.view);
+  const isDrilldown = ['sprintDetail', 'sprintCreate', 'requirementDetail', 'milestoneDetail', 'sprintEdit', 'sprintEditBasic', 'sprintEditPlan', 'sprintEditRequirements'].includes(state.view);
   if (state.currentUserId) syncRouteToHash();
 
   app.innerHTML = `
@@ -1230,6 +1230,7 @@ function renderTopbar() {
   const breadcrumbLabel = {
     sprintDetail: 'Sprint Detail',
     sprintCreate: 'Create Sprint',
+    sprintEdit: 'Edit Sprint',
     sprintEditBasic: 'Edit Sprint',
     sprintEditPlan: 'Edit Plan',
     sprintEditRequirements: 'Edit Requirements',
@@ -1557,25 +1558,29 @@ function createSprintDraft(projectId = state.selectedProjectId) {
   };
 }
 
-function renderSprintWizard(step, draft) {
+function renderSprintWizard(step, draft, mode = 'create') {
   const steps = [
     ['basic', '基础信息'],
     ['plan', '计划与里程碑'],
     ['requirements', '关键需求'],
   ];
+  const isEdit = mode === 'edit';
+  const submitLabel = isEdit ? '保存 Sprint' : '创建 Sprint';
+  const cancelAction = isEdit ? 'cancel-sprint-edit' : 'cancel-sprint-create';
+  const stepActionPrefix = isEdit ? 'sprint-edit' : 'sprint-create';
   return `
-    <form data-form="sprint-create" class="edit-page-form wizard-form">
+    <form data-form="${isEdit ? 'sprint-edit' : 'sprint-create'}" class="edit-page-form wizard-form" novalidate>
       <div class="wizard-steps">
-        ${steps.map(([key, label], index) => `<button type="button" class="wizard-step ${step === key ? 'active' : ''}" data-action="sprint-create-step" data-step="${key}"><span>${index + 1}</span>${label}</button>`).join('')}
+        ${steps.map(([key, label], index) => `<button type="button" class="wizard-step ${step === key ? 'active' : ''}" data-action="${stepActionPrefix}-step" data-step="${key}"><span>${index + 1}</span>${label}</button>`).join('')}
       </div>
       <div class="wizard-panel ${step === 'basic' ? 'active' : ''}">
         <div class="form-grid">
           ${hiddenField('id', draft.id)}
           ${hiddenField('projectId', draft.projectId)}
           ${field('Sprint 名称', 'name', draft.name, 'text', true)}
-          ${selectField('Sprint Owner', 'owner', projectMemberOptions(draft.projectId, draft.owner))}
-          ${selectField('Sprint 状态', 'status', sprintStatusOptions(draft.status))}
-          ${selectField('优先级', 'priority', priorityOptions(draft.priority))}
+          ${selectField('Sprint Owner', 'owner', projectMemberOptions(draft.projectId, draft.owner), false, true)}
+          ${selectField('Sprint 状态', 'status', sprintStatusOptions(draft.status), false, true)}
+          ${selectField('优先级', 'priority', priorityOptions(draft.priority), false, true)}
           ${field('开始日期', 'startDate', draft.startDate, 'date', true)}
           ${field('结束日期', 'endDate', draft.endDate, 'date', true)}
           ${textareaField('Sprint 描述', 'description', draft.description)}
@@ -1592,9 +1597,9 @@ function renderSprintWizard(step, draft) {
         ${renderRepeatSection('requirements', '关键需求', draft.requirements || [], renderRequirementForm)}
       </div>
       <div class="edit-page-footer">
-        <button type="button" class="button" data-action="cancel-sprint-create">取消</button>
-        ${step !== 'basic' ? '<button type="button" class="button" data-action="sprint-create-prev">上一步</button>' : ''}
-        ${step !== 'requirements' ? '<button type="button" class="button primary" data-action="sprint-create-next">下一步</button>' : '<button type="submit" class="button primary">创建 Sprint</button>'}
+        <button type="button" class="button" data-action="${cancelAction}">取消</button>
+        ${step !== 'basic' ? `<button type="button" class="button" data-action="${stepActionPrefix}-prev">上一步</button>` : ''}
+        ${step !== 'requirements' ? `<button type="button" class="button primary" data-action="${stepActionPrefix}-next">下一步</button>` : `<button type="submit" class="button primary">${submitLabel}</button>`}
       </div>
     </form>
   `;
@@ -1617,7 +1622,7 @@ function renderSprintDetail(sprint) {
             <p class="muted">${escapeHtml(sprint.description || sprint.goal)}</p>
           </div>
           <div class="hero-actions">
-            ${canManage ? `<button class="button" data-action="edit-sprint-section" data-section="basic" data-id="${sprint.id}">编辑 Sprint</button>` : ''}
+            ${canManage ? `<button class="button" data-action="edit-sprint" data-step="basic" data-id="${sprint.id}">编辑 Sprint</button>` : ''}
             ${canManage ? `<button class="button danger" data-action="delete-sprint" data-id="${sprint.id}">删除 Sprint</button>` : ''}
           </div>
         </div>
@@ -1640,8 +1645,8 @@ function renderSprintDetail(sprint) {
           <p class="small">时间轴和里程碑在同一卡片中配置与查看。</p>
         </div>
         ${canManage ? `<div class="card-actions">
-          <button class="button" data-action="edit-sprint-section" data-section="plan" data-add="milestones" data-id="${sprint.id}">+ 里程碑</button>
-          <button class="button" data-action="edit-sprint-section" data-section="plan" data-add="timelineNodes" data-id="${sprint.id}">+ 时间节点</button>
+          <button class="button" data-action="edit-sprint" data-step="plan" data-add="milestones" data-id="${sprint.id}">+ 里程碑</button>
+          <button class="button" data-action="edit-sprint" data-step="plan" data-add="timelineNodes" data-id="${sprint.id}">+ 时间节点</button>
         </div>` : ''}
       </div>
       ${renderTimeline(sprint, timelineNodes)}
@@ -1661,7 +1666,7 @@ function renderSprintDetail(sprint) {
         </div>
         <div class="card-actions">
           <span class="small">${requirements.length} 条</span>
-          ${canManage ? `<button class="button" data-action="edit-sprint-section" data-section="requirements" data-id="${sprint.id}">维护需求链接</button>` : ''}
+          ${canManage ? `<button class="button" data-action="edit-sprint" data-step="requirements" data-id="${sprint.id}">维护需求链接</button>` : ''}
         </div>
       </div>
       <div class="mini-list">
@@ -1674,21 +1679,22 @@ function renderSprintDetail(sprint) {
 function renderSprintEditPage() {
   const sprint = currentSprint();
   const project = currentProject();
-  const editMode = state.edit?.mode || state.view.replace('sprintEdit', '').toLowerCase();
+  const stepMap = {
+    sprintEdit: 'basic',
+    sprintEditBasic: 'basic',
+    sprintEditPlan: 'plan',
+    sprintEditRequirements: 'requirements',
+  };
+  const editStep = state.edit?.step || stepMap[state.view] || 'basic';
   if (!sprint || !project || !canManageProject(project)) {
     state.view = 'sprintDetail';
     return '';
   }
-  if (!state.edit?.draft || state.edit.draft.id !== sprint.id) {
-    state.edit = { type: 'sprint', mode: editMode, draft: sprintEditDraft(sprint) };
+  if (!state.edit?.draft || state.edit.draft.id !== sprint.id || state.edit.type !== 'sprint-edit') {
+    state.edit = { type: 'sprint-edit', step: editStep, draft: sprintEditDraft(sprint) };
   }
+  state.edit.step = editStep;
   const draft = state.edit.draft;
-  const title = editMode === 'plan' ? '编辑计划与里程碑' : editMode === 'requirements' ? '编辑关键需求' : '编辑 Sprint 信息';
-  const subtitle = editMode === 'plan'
-    ? '仅维护时间轴节点和里程碑，不影响 Sprint 基础信息。'
-    : editMode === 'requirements'
-      ? '仅维护需求编号、负责人、状态、交付日期和 WeTask 链接。'
-      : '仅维护 Sprint 名称、负责人、周期、优先级、目标和验收信息。';
   return `
     <section class="detail-page">
       <div class="detail-nav">
@@ -1699,15 +1705,15 @@ function renderSprintEditPage() {
         <div class="hero-content">
           <div class="hero-title">
             <div>
-              <p class="eyebrow">Sprint 三级编辑</p>
+              <p class="eyebrow">Sprint 编辑向导</p>
               <div class="sprint-title-row">
-                <h2>${title}</h2>
+                <h2>编辑 Sprint</h2>
                 ${badge(sprint.status)}
               </div>
-              <p class="muted">${subtitle}</p>
+              <p class="muted">按与创建一致的步骤维护基础信息、计划与里程碑、关键需求。</p>
             </div>
           </div>
-          ${renderSprintEditForm(editMode, draft)}
+          ${renderSprintWizard(editStep, draft, 'edit')}
         </div>
       </section>
     </section>
@@ -1722,58 +1728,6 @@ function sprintEditDraft(sprint) {
     requirements: structuredClone(childData.requirements),
     timelineNodes: structuredClone(childData.timelineNodes),
   };
-}
-
-function renderSprintEditForm(mode, draft) {
-  if (mode === 'plan') {
-    return `
-      <form data-form="sprint-edit-plan" class="edit-page-form">
-        ${hiddenField('id', draft.id)}
-        ${hiddenField('projectId', draft.projectId)}
-        ${renderRepeatSection('milestones', '里程碑', draft.milestones || [], renderMilestoneForm)}
-        ${renderRepeatSection('timelineNodes', '时间轴节点', draft.timelineNodes || [], renderTimelineNodeForm)}
-        ${editPageFooter()}
-      </form>
-    `;
-  }
-  if (mode === 'requirements') {
-    return `
-      <form data-form="sprint-edit-requirements" class="edit-page-form">
-        ${hiddenField('id', draft.id)}
-        ${hiddenField('projectId', draft.projectId)}
-        ${renderRepeatSection('requirements', '关键需求', draft.requirements || [], renderRequirementForm)}
-        ${editPageFooter()}
-      </form>
-    `;
-  }
-  return `
-    <form data-form="sprint-edit-basic" class="edit-page-form">
-      <div class="form-grid">
-        ${hiddenField('id', draft.id)}
-        ${hiddenField('projectId', draft.projectId)}
-        ${field('Sprint 名称', 'name', draft.name, 'text', true)}
-        ${selectField('Sprint Owner', 'owner', projectMemberOptions(draft.projectId, draft.owner))}
-        ${selectField('Sprint 状态', 'status', sprintStatusOptions(draft.status))}
-        ${selectField('优先级', 'priority', priorityOptions(draft.priority))}
-        ${field('开始日期', 'startDate', draft.startDate, 'date', true)}
-        ${field('结束日期', 'endDate', draft.endDate, 'date', true)}
-        ${textareaField('Sprint 描述', 'description', draft.description)}
-        ${textareaField('Sprint 目标', 'goal', draft.goal, true)}
-        ${textareaField('验收标准', 'acceptanceCriteria', draft.acceptanceCriteria)}
-        ${textareaField('风险说明', 'riskNote', draft.riskNote)}
-      </div>
-      ${editPageFooter()}
-    </form>
-  `;
-}
-
-function editPageFooter() {
-  return `
-    <div class="edit-page-footer">
-      <button type="button" class="button" data-action="cancel-sprint-edit">取消</button>
-      <button type="submit" class="button primary">保存</button>
-    </div>
-  `;
 }
 
 function renderRequirementPage() {
@@ -1799,7 +1753,7 @@ function renderRequirementPage() {
               <h2>${escapeHtml(req.title)}</h2>
               <p class="muted">${escapeHtml(req.description || '暂无描述')}</p>
             </div>
-            ${canManageProject(project) ? `<button class="button" data-action="edit-sprint-section" data-section="requirements" data-id="${sprint.id}">编辑需求</button>` : ''}
+            ${canManageProject(project) ? `<button class="button" data-action="edit-sprint" data-step="requirements" data-id="${sprint.id}">编辑需求</button>` : ''}
           </div>
           <div class="summary-grid">
             <div class="summary-card"><span>负责人</span><strong>${escapeHtml(userName(req.owner))}</strong></div>
@@ -1841,7 +1795,7 @@ function renderMilestonePage() {
               <h2>${escapeHtml(milestone.name)}</h2>
               <p class="muted">${escapeHtml(milestone.description || '暂无描述')}</p>
             </div>
-            ${canManageProject(project) ? `<button class="button" data-action="edit-sprint-section" data-section="plan" data-id="${sprint.id}">编辑里程碑</button>` : ''}
+            ${canManageProject(project) ? `<button class="button" data-action="edit-sprint" data-step="plan" data-id="${sprint.id}">编辑里程碑</button>` : ''}
           </div>
           <div class="summary-grid">
             <div class="summary-card"><span>负责人</span><strong>${escapeHtml(userName(milestone.owner))}</strong></div>
@@ -2004,8 +1958,12 @@ function renderSprintForm(sprint) {
   `;
 }
 
+function formatFieldLabel(label, required = false) {
+  return `${label}${required ? '<span class="required-mark">*</span>' : ''}`;
+}
+
 function field(label, name, value = '', type = 'text', required = false) {
-  return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? 'required' : ''} /></div>`;
+  return `<div class="field"><label>${formatFieldLabel(label, required)}</label><input name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? 'required' : ''} /></div>`;
 }
 
 function hiddenField(name, value = '') {
@@ -2013,11 +1971,11 @@ function hiddenField(name, value = '') {
 }
 
 function textareaField(label, name, value = '', required = false) {
-  return `<div class="field full"><label>${label}</label><textarea name="${name}" ${required ? 'required' : ''}>${escapeHtml(value || '')}</textarea></div>`;
+  return `<div class="field full"><label>${formatFieldLabel(label, required)}</label><textarea name="${name}" ${required ? 'required' : ''}>${escapeHtml(value || '')}</textarea></div>`;
 }
 
-function selectField(label, name, options, multiple = false) {
-  return `<div class="field ${multiple ? 'full' : ''}"><label>${label}</label><select name="${name}" ${multiple ? 'multiple size="4"' : ''}>${options}</select></div>`;
+function selectField(label, name, options, multiple = false, required = false) {
+  return `<div class="field ${multiple ? 'full' : ''}"><label>${formatFieldLabel(label, required)}</label><select name="${name}" ${multiple ? 'multiple size="4"' : ''} ${required ? 'required' : ''}>${options}</select></div>`;
 }
 
 function projectStatusOptions(selected) {
@@ -2080,9 +2038,9 @@ function renderRequirementForm(item, index) {
       <div class="form-grid">
         ${field('需求编号', `requirements.${index}.code`, item.code, 'text', true)}
         ${field('需求标题', `requirements.${index}.title`, item.title, 'text', true)}
-        ${selectField('优先级', `requirements.${index}.priority`, ['P0', 'P1', 'P2', 'P3'].map((p) => `<option value="${p}" ${item.priority === p ? 'selected' : ''}>${p}</option>`).join(''))}
-        ${selectField('负责人', `requirements.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner))}
-        ${selectField('状态', `requirements.${index}.status`, requirementStatusOptions(item.status))}
+        ${selectField('优先级', `requirements.${index}.priority`, ['P0', 'P1', 'P2', 'P3'].map((p) => `<option value="${p}" ${item.priority === p ? 'selected' : ''}>${p}</option>`).join(''), false, true)}
+        ${selectField('负责人', `requirements.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner), false, true)}
+        ${selectField('状态', `requirements.${index}.status`, requirementStatusOptions(item.status), false, true)}
         ${field('预期交付时间', `requirements.${index}.expectedDeliveryDate`, item.expectedDeliveryDate, 'date')}
         ${field('WeTask 链接', `requirements.${index}.wetaskUrl`, item.wetaskUrl || '', 'url')}
         ${textareaField('需求描述', `requirements.${index}.description`, item.description)}
@@ -2107,8 +2065,8 @@ function renderMilestoneForm(item, index) {
       <div class="form-grid">
         ${field('里程碑名称', `milestones.${index}.name`, item.name, 'text', true)}
         ${field('里程碑日期', `milestones.${index}.date`, item.date, 'date', true)}
-        ${selectField('负责人', `milestones.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner))}
-        ${selectField('状态', `milestones.${index}.status`, sprintStatusOptions(item.status))}
+        ${selectField('负责人', `milestones.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner), false, true)}
+        ${selectField('状态', `milestones.${index}.status`, sprintStatusOptions(item.status), false, true)}
         ${field('交付物', `milestones.${index}.deliverable`, item.deliverable)}
         ${textareaField('描述', `milestones.${index}.description`, item.description)}
       </div>
@@ -2127,10 +2085,10 @@ function renderTimelineNodeForm(item, index) {
       <div class="form-grid">
         ${field('节点名称', `timelineNodes.${index}.title`, item.title, 'text', true)}
         ${field('节点日期', `timelineNodes.${index}.date`, item.date, 'date', true)}
-        ${selectField('节点类型', `timelineNodes.${index}.type`, timelineTypeOptions(item.type))}
-        ${selectField('负责人', `timelineNodes.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner))}
-        ${selectField('状态', `timelineNodes.${index}.status`, sprintStatusOptions(item.status))}
-        ${selectField('是否关键节点', `timelineNodes.${index}.isCritical`, `<option value="true" ${item.isCritical ? 'selected' : ''}>是</option><option value="false" ${!item.isCritical ? 'selected' : ''}>否</option>`)}
+        ${selectField('节点类型', `timelineNodes.${index}.type`, timelineTypeOptions(item.type), false, true)}
+        ${selectField('负责人', `timelineNodes.${index}.owner`, projectMemberOptions(sprintProjectId, item.owner), false, true)}
+        ${selectField('状态', `timelineNodes.${index}.status`, sprintStatusOptions(item.status), false, true)}
+        ${selectField('是否关键节点', `timelineNodes.${index}.isCritical`, `<option value="true" ${item.isCritical ? 'selected' : ''}>是</option><option value="false" ${!item.isCritical ? 'selected' : ''}>否</option>`, false, true)}
         ${textareaField('说明', `timelineNodes.${index}.description`, item.description)}
       </div>
     </div>
@@ -2247,8 +2205,8 @@ function openSprintEdit(mode = 'basic', sprint = currentSprint(), appendKey = ''
   state.selectedProjectId = sprint.projectId;
   state.selectedSprintId = sprint.id;
   state.drawer = null;
-  state.edit = { type: 'sprint', mode, draft: sprintEditDraft(sprint) };
-  state.view = mode === 'plan' ? 'sprintEditPlan' : mode === 'requirements' ? 'sprintEditRequirements' : 'sprintEditBasic';
+  state.edit = { type: 'sprint-edit', step: mode, draft: sprintEditDraft(sprint) };
+  state.view = 'sprintEdit';
   if (appendKey) {
     addRepeat(appendKey);
     return;
@@ -2268,6 +2226,16 @@ function openSprintCreate(projectId = state.selectedProjectId) {
 
 function setSprintCreateStep(step) {
   if (!state.edit || state.edit.type !== 'sprint-create') return;
+  const order = ['basic', 'plan', 'requirements'];
+  const currentIndex = order.indexOf(state.edit.step || 'basic');
+  const nextIndex = order.indexOf(step);
+  if (nextIndex > currentIndex) {
+    const error = validateSprintCreateStep(state.edit.draft, state.edit.step || 'basic');
+    if (error) {
+      showToast(error);
+      return;
+    }
+  }
   state.edit.step = step;
   render();
 }
@@ -2276,6 +2244,44 @@ function sprintCreateStepOffset(offset) {
   if (!state.edit || state.edit.type !== 'sprint-create') return;
   const order = ['basic', 'plan', 'requirements'];
   const index = order.indexOf(state.edit.step || 'basic');
+  if (offset > 0) {
+    const error = validateSprintCreateStep(state.edit.draft, state.edit.step || 'basic');
+    if (error) {
+      showToast(error);
+      return;
+    }
+  }
+  state.edit.step = order[Math.max(0, Math.min(order.length - 1, index + offset))];
+  render();
+}
+
+function setSprintEditStep(step) {
+  if (!state.edit || state.edit.type !== 'sprint-edit') return;
+  const order = ['basic', 'plan', 'requirements'];
+  const currentIndex = order.indexOf(state.edit.step || 'basic');
+  const nextIndex = order.indexOf(step);
+  if (nextIndex > currentIndex) {
+    const error = validateSprintCreateStep(state.edit.draft, state.edit.step || 'basic');
+    if (error) {
+      showToast(error);
+      return;
+    }
+  }
+  state.edit.step = step;
+  render();
+}
+
+function sprintEditStepOffset(offset) {
+  if (!state.edit || state.edit.type !== 'sprint-edit') return;
+  const order = ['basic', 'plan', 'requirements'];
+  const index = order.indexOf(state.edit.step || 'basic');
+  if (offset > 0) {
+    const error = validateSprintCreateStep(state.edit.draft, state.edit.step || 'basic');
+    if (error) {
+      showToast(error);
+      return;
+    }
+  }
   state.edit.step = order[Math.max(0, Math.min(order.length - 1, index + offset))];
   render();
 }
@@ -2307,7 +2313,7 @@ function readForm(form) {
     data[collection][itemIndex][fieldName] = value;
   }
 
-  const teamsSelect = form.querySelector('select[name="teams"]');
+  const teamsSelect = form?.querySelector?.('select[name="teams"]');
   if (teamsSelect) {
     data.teams = Array.from(teamsSelect.selectedOptions).map((option) => option.value);
   }
@@ -2357,6 +2363,54 @@ function validateSprint(sprint) {
 
   const outsideTimeline = sprint.timelineNodes.find((item) => item.date && (item.date < sprint.startDate || item.date > sprint.endDate));
   if (outsideTimeline) return `时间节点「${outsideTimeline.title || '未命名'}」不在 Sprint 周期内`;
+
+  return '';
+}
+
+function validateSprintCreateStep(sprint, step) {
+  if (!sprint) return 'Sprint 数据不存在';
+
+  if (step === 'basic') {
+    if (!String(sprint.name || '').trim()) return '请填写 Sprint 名称';
+    if (!String(sprint.goal || '').trim()) return '请填写 Sprint 目标';
+    if (!String(sprint.owner || '').trim()) return '请选择 Sprint Owner';
+    if (!String(sprint.status || '').trim()) return '请选择 Sprint 状态';
+    if (!String(sprint.priority || '').trim()) return '请选择优先级';
+    if (!String(sprint.startDate || '').trim()) return '请选择开始日期';
+    if (!String(sprint.endDate || '').trim()) return '请选择结束日期';
+    if (sprint.endDate < sprint.startDate) return 'Sprint 结束日期不能早于开始日期';
+    const project = state.projects.find((item) => item.id === sprint.projectId) || currentProject();
+    if (project && (sprint.startDate < project.startDate || sprint.endDate > project.endDate)) {
+      return 'Sprint 周期必须在项目周期内';
+    }
+    return '';
+  }
+
+  if (step === 'plan') {
+    const invalidMilestone = (sprint.milestones || []).find((item) => {
+      const filled = [item.name, item.date, item.owner, item.status, item.deliverable, item.description].some((value) => String(value || '').trim());
+      if (!filled) return false;
+      return !String(item.name || '').trim() || !String(item.date || '').trim() || !String(item.owner || '').trim() || !String(item.status || '').trim();
+    });
+    if (invalidMilestone) return '请补全里程碑的名称、日期、负责人和状态';
+
+    const invalidTimeline = (sprint.timelineNodes || []).find((item) => {
+      const filled = [item.title, item.date, item.type, item.owner, item.status, item.description, item.isCritical].some((value) => String(value ?? '').trim());
+      if (!filled) return false;
+      return !String(item.title || '').trim() || !String(item.date || '').trim() || !String(item.type || '').trim() || !String(item.owner || '').trim() || !String(item.status || '').trim();
+    });
+    if (invalidTimeline) return '请补全时间节点的名称、日期、类型、负责人和状态';
+    return '';
+  }
+
+  if (step === 'requirements') {
+    const invalidRequirement = (sprint.requirements || []).find((item) => {
+      const filled = [item.code, item.title, item.priority, item.owner, item.status, item.expectedDeliveryDate, item.description, item.acceptanceCriteria, item.wetaskUrl].some((value) => String(value || '').trim());
+      if (!filled) return false;
+      return !String(item.code || '').trim() || !String(item.title || '').trim() || !String(item.priority || '').trim() || !String(item.owner || '').trim() || !String(item.status || '').trim();
+    });
+    if (invalidRequirement) return '请补全需求编号、标题、优先级、负责人和状态';
+  }
 
   return '';
 }
@@ -2434,6 +2488,14 @@ function saveSprintCreate(form) {
   const sprint = readForm(form);
   const project = state.projects.find((item) => item.id === sprint.projectId) || currentProject();
   if (!requirePermission(canManageProject(project), '只有 PMO 或项目 PM 可以创建 Sprint')) return;
+  for (const step of ['basic', 'plan', 'requirements']) {
+    const stepError = validateSprintCreateStep(sprint, step);
+    if (stepError) {
+      state.edit.step = step;
+      showToast(stepError);
+      return;
+    }
+  }
   const error = validateSprint(sprint);
   if (error) {
     showToast(error);
@@ -2460,72 +2522,59 @@ function saveSprintCreate(form) {
 }
 
 function saveSprintEdit(form) {
-  const mode = state.edit?.mode || 'basic';
   const draft = readForm(form);
   const existing = state.sprints.find((item) => item.id === draft.id);
   const project = state.projects.find((item) => item.id === existing?.projectId);
   if (!existing || !requirePermission(canManageProject(project), '只有 PMO 或项目 PM 可以保存 Sprint')) return;
-
-  if (mode === 'basic') {
-    const nextSprint = {
-      ...existing,
-      name: draft.name,
-      owner: draft.owner,
-      status: draft.status,
-      priority: draft.priority,
-      startDate: draft.startDate,
-      endDate: draft.endDate,
-      description: draft.description,
-      goal: draft.goal,
-      acceptanceCriteria: draft.acceptanceCriteria,
-      riskNote: draft.riskNote,
-      milestones: sprintChildren(existing.id).milestones,
-      timelineNodes: sprintChildren(existing.id).timelineNodes,
-    };
-    const error = validateSprint(nextSprint);
-    if (error) {
-      showToast(error);
+  for (const step of ['basic', 'plan', 'requirements']) {
+    const stepError = validateSprintCreateStep(draft, step);
+    if (stepError) {
+      state.edit.step = step;
+      showToast(stepError);
       return;
     }
-    delete nextSprint.milestones;
-    delete nextSprint.timelineNodes;
-    nextSprint.updatedAt = today();
-    state.sprints[state.sprints.findIndex((item) => item.id === existing.id)] = nextSprint;
   }
 
-  if (mode === 'plan') {
-    const nextSprint = {
-      ...existing,
-      milestones: draft.milestones || [],
-      timelineNodes: draft.timelineNodes || [],
-    };
-    const error = validateSprint(nextSprint);
-    if (error) {
-      showToast(error);
-      return;
-    }
-    state.milestones = state.milestones
-      .filter((item) => item.sprintId !== existing.id)
-      .concat((draft.milestones || []).map((item) => ({ ...item, id: item.id || uid('m'), sprintId: existing.id })));
-    state.timelineNodes = state.timelineNodes
-      .filter((item) => item.sprintId !== existing.id)
-      .concat((draft.timelineNodes || []).map((item) => ({ ...item, id: item.id || uid('t'), sprintId: existing.id, requirementIds: item.requirementIds || [] })));
+  const nextSprint = {
+    ...existing,
+    name: draft.name,
+    owner: draft.owner,
+    status: draft.status,
+    priority: draft.priority,
+    startDate: draft.startDate,
+    endDate: draft.endDate,
+    description: draft.description,
+    goal: draft.goal,
+    acceptanceCriteria: draft.acceptanceCriteria,
+    riskNote: draft.riskNote,
+    milestones: draft.milestones || [],
+    timelineNodes: draft.timelineNodes || [],
+    requirements: draft.requirements || [],
+  };
+  const error = validateSprint(nextSprint);
+  if (error) {
+    showToast(error);
+    return;
   }
 
-  if (mode === 'requirements') {
-    const invalid = (draft.requirements || []).find((item) => !item.code?.trim() || !item.title?.trim());
-    if (invalid) {
-      showToast('需求编号和标题不能为空');
-      return;
-    }
-    state.requirements = state.requirements
-      .filter((item) => item.sprintId !== existing.id)
-      .concat((draft.requirements || []).map((item) => ({ ...item, id: item.id || uid('r'), sprintId: existing.id })));
-  }
+  delete nextSprint.milestones;
+  delete nextSprint.timelineNodes;
+  delete nextSprint.requirements;
+  nextSprint.updatedAt = today();
+  state.sprints[state.sprints.findIndex((item) => item.id === existing.id)] = nextSprint;
+  state.milestones = state.milestones
+    .filter((item) => item.sprintId !== existing.id)
+    .concat((draft.milestones || []).map((item) => ({ ...item, id: item.id || uid('m'), sprintId: existing.id })));
+  state.timelineNodes = state.timelineNodes
+    .filter((item) => item.sprintId !== existing.id)
+    .concat((draft.timelineNodes || []).map((item) => ({ ...item, id: item.id || uid('t'), sprintId: existing.id, requirementIds: item.requirementIds || [] })));
+  state.requirements = state.requirements
+    .filter((item) => item.sprintId !== existing.id)
+    .concat((draft.requirements || []).map((item) => ({ ...item, id: item.id || uid('r'), sprintId: existing.id })));
 
   state.edit = null;
   state.view = 'sprintDetail';
-  persistState(`sprint.${mode}.saved`);
+  persistState('sprint.edit.saved');
   showToast('Sprint 已保存');
 }
 
@@ -2806,7 +2855,19 @@ app.addEventListener('click', (event) => {
     state.edit.draft = readForm(target.closest('form'));
     sprintCreateStepOffset(-1);
   }
-  if (action === 'edit-sprint') openSprintDrawer('edit', state.sprints.find((sprint) => sprint.id === id));
+  if (action === 'sprint-edit-step') {
+    state.edit.draft = readForm(target.closest('form'));
+    setSprintEditStep(step);
+  }
+  if (action === 'sprint-edit-next') {
+    state.edit.draft = readForm(target.closest('form'));
+    sprintEditStepOffset(1);
+  }
+  if (action === 'sprint-edit-prev') {
+    state.edit.draft = readForm(target.closest('form'));
+    sprintEditStepOffset(-1);
+  }
+  if (action === 'edit-sprint') openSprintEdit(step || 'basic', state.sprints.find((sprint) => sprint.id === id), add);
   if (action === 'edit-sprint-section') openSprintEdit(section, state.sprints.find((sprint) => sprint.id === id), add);
   if (action === 'add-milestone') openSprintEdit('plan', currentSprint(), 'milestones');
   if (action === 'add-timeline-node') openSprintEdit('plan', currentSprint(), 'timelineNodes');
@@ -2884,7 +2945,7 @@ app.addEventListener('submit', (event) => {
   if (form.dataset.form === 'project') saveProject(form);
   if (form.dataset.form === 'sprint') saveSprint(form);
   if (form.dataset.form === 'sprint-create') saveSprintCreate(form);
-  if (form.dataset.form?.startsWith('sprint-edit-')) saveSprintEdit(form);
+  if (form.dataset.form === 'sprint-edit' || form.dataset.form?.startsWith('sprint-edit-')) saveSprintEdit(form);
   if (form.dataset.form === 'user') saveUser(form);
 });
 
